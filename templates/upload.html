@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Video Altyazı Üretici</title>
+</head>
+<body>
+    <h1>Video Altyazı Üretici</h1>
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit">Yükle ve Altyazı Ekle</button>
+    </form>
+</body>
+</html>
