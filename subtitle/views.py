@@ -20,13 +20,23 @@ def split_audio(audio_path, chunk_length_ms):
     chunks = make_chunks(audio, chunk_length_ms)
     return chunks
 
-def transcribe_audio_chunk(audio_chunk, recognizer):
-    with sr.AudioFile(audio_chunk) as source:
-        audio = recognizer.record(source)
-        try:
-            return recognizer.recognize_google(audio)
-        except sr.UnknownValueError:
-            return ""
+def transcribe_audio_chunk(audio_chunk, recognizer, language='tr-TR'):
+    """
+    Ses dosyasını metne dönüştürür.
+    :param audio_chunk: Ses dosyasının yolu.
+    :param recognizer: SpeechRecognition tanıyıcısı.
+    :param language: Dönüştürülecek dil (Varsayılan Türkçe).
+    :return: Metne dönüştürülmüş string.
+    """
+    try:
+        with sr.AudioFile(audio_chunk) as source:
+            audio = recognizer.record(source)
+            return recognizer.recognize_google(audio, language=language)
+    except sr.UnknownValueError:
+        return ""  # Tanınamayan bir ses varsa boş string döner
+    except sr.RequestError as e:
+        print(f"Google Speech API hatası: {e}")
+        return ""
 
 def create_srt(transcriptions, chunk_duration_ms):
     subtitles = []
@@ -61,7 +71,7 @@ def add_subtitles_to_video(video_path, srt_path, output_path):
             fontsize=24,  # Yazı boyutu
             color='white',  # Yazı rengi
             bg_color='black',  # Arka plan rengi
-            font="C:/Windows/Fonts/Arial"  # Font dosyasının tam yolu
+            font="DejaVu-Sans"  # Font dosyasının tam yolu
         )
         text_clip = text_clip.set_position(("center", "bottom")).set_duration(end - start).set_start(start)
         subtitle_clips.append(text_clip)
@@ -75,20 +85,20 @@ def upload_video(request):
         form = VideoUploadForm(request.POST, request.FILES)
         if form.is_valid():
             video = form.save()
-            video_path = video.video_file.path  # Yüklenen video dosyasının tam yolu
+            video_path = video.video_file.path
 
-            # Altyazı dosyası ve çıktı yolları oluştur
-            srt_dir = os.path.join(settings.MEDIA_ROOT, 'subtitles')  # subtitles klasörünü oluşturmak için yol
-            srt_path = os.path.join(srt_dir, f"{video.id}.srt")  # Altyazı dosyasının tam yolu
-            output_video_path = os.path.join(settings.MEDIA_ROOT, 'outputs', f"output_{video.id}.mp4")  # Çıktı video yolu
+            # Altyazı dosyası ve çıktı yolları
+            srt_dir = os.path.join(settings.MEDIA_ROOT, 'subtitles')
+            srt_path = os.path.join(srt_dir, f"{video.id}.srt")
 
-            # Klasörlerin mevcut olup olmadığını kontrol et ve oluştur
-            os.makedirs(srt_dir, exist_ok=True)  # subtitles klasörünü oluştur
-            os.makedirs(os.path.dirname(output_video_path), exist_ok=True)  # outputs klasörünü oluştur
+            os.makedirs(srt_dir, exist_ok=True)
 
-            # Ses çıkarma, altyazı oluşturma ve videoya ekleme işlemleri burada devam eder
-            audio_path = f"temp_audio_{video.id}.wav"  # Geçici ses dosyasının adı
-            extract_audio(video_path, audio_path)  # Videodan ses çıkarma işlemi
+            # Kullanıcıdan dil seçimi al veya varsayılan olarak Türkçe'yi ayarla
+            language = request.POST.get('language', 'tr-TR')
+
+            # Ses çıkarma, altyazı oluşturma
+            audio_path = f"temp_audio_{video.id}.wav"
+            extract_audio(video_path, audio_path)
             chunk_length_ms = 10000
             audio_chunks = split_audio(audio_path, chunk_length_ms)
             recognizer = sr.Recognizer()
@@ -96,7 +106,7 @@ def upload_video(request):
             for i, chunk in enumerate(audio_chunks):
                 chunk_path = f"chunk_{i}.wav"
                 chunk.export(chunk_path, format="wav")
-                transcription = transcribe_audio_chunk(chunk_path, recognizer)
+                transcription = transcribe_audio_chunk(chunk_path, recognizer, language=language)
                 transcriptions.append(transcription)
                 os.remove(chunk_path)
             subtitles = create_srt(transcriptions, chunk_length_ms)
@@ -104,18 +114,15 @@ def upload_video(request):
                 f.write(subtitles)
             os.remove(audio_path)
 
-            # Videoya altyazı ekle
-            add_subtitles_to_video(video_path, srt_path, output_video_path)
-
-            # Modeli güncelle
-            video.subtitle_file.name = srt_path.replace(settings.MEDIA_ROOT, '')  # Göreceli yolu kaydet
-            video.output_video.name = output_video_path.replace(settings.MEDIA_ROOT, '')  # Göreceli yolu kaydet
-            video.save()
-
-            return HttpResponse(f"Altyazılı video hazır: <a href='{video.output_video.url}'>İndir</a>")
+            # Videoya altyazı eklenmesi
+            return render(request, 'play_video.html', {
+                'video_url': video.video_file.url,
+                'subtitle_url': srt_path.replace(settings.MEDIA_ROOT, '/media/')
+            })
 
     else:
         form = VideoUploadForm()
 
     return render(request, 'upload.html', {'form': form})
+
 
